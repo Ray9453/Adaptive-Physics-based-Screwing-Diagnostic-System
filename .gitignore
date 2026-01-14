@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# Environments
+.venv/
+env/
+venv/
+ENV/
+
+# Project Specific
+saved_models/
+*.log
+
+# IDEs
+.vscode/
+.idea/
