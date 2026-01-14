@@ -1,0 +1,6 @@
+tolerance:
+  production_tolerance_factor: 3.0  # 生產寬容度 (L) - 滑動條可調 (0.5 - 5.0)
+
+codes:
+  disabled_e_codes: []   # 不使用的錯誤代碼，例如 ["E05"]
+  disabled_r_codes: []   # 不使用的解決方案代碼

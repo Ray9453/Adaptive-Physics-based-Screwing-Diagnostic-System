@@ -1,0 +1,132 @@
+APSD Development Guide
+======================
+Version: 1.0.0
+Date: 2026-01-11
+
+1. System Overview
+------------------
+The Adaptive Physics-based Screwing Diagnostic System (APSD) is an SDK responsible for diagnosing fastening operations on edge devices. It combines physical heuristics (Layer 1) and statistical adaptive learning (Layer 2) to provide "OK/NG" results without pre-labeled training data.
+
+2. Requirements Mapping
+-----------------------
+This section maps the specific requirements (from system_need.txt) to the implementation.
+
+[Req 4, 5, 22, 23] Architecture & Standards
+- Implementation: Modular "Shadow Mode" Architecture
+- Code Location: `apsd/`
+- Compliance:
+  - PEP 8 Verified.
+  - English Naming Verified.
+  - Structure mimics standard model artifacts.
+
+[Req 6, 12] Data Input
+- Format: Dict[HoleID, Dict[Field, List[float]]]
+- Implementation: `apsd/models/input_data.py` (Class `CurveData`)
+- Fields: `torque`, `angle`, `time` (Renamed from Chinese requirements per Req 22).
+
+[Req 7] Data Volume Tiers (The 3 Stages)
+- Logic Location: `apsd/core/learning.py` (Class `HoleModel.update`)
+1. Cold Start (< 2 samples):
+   - Logic: Heuristic Checks ONLY.
+   - Code: `apsd/core/feature_extractor.py` (`check_hard_constraints`)
+2. Shadow Mode (1-50 samples):
+   - Logic: 3-Sigma Tolerance enforced.
+   - Code: `learning.py` -> `evaluate` method (status check).
+3. Golden Base (50-100 samples):
+   - Logic: Locks stats at N=100.
+   - Code: `learning.py` -> `update` method (freezes `golden_stats`).
+
+[Req 9, 31] Model Storage (Persistence)
+- Location: `apsd/storage/model_manager.py`
+- Mechanism: Atomic Write (write temp -> rename).
+- Format: JSON.
+- Limit strategy: Rolling buffer maxlen=500 (`learning.py`).
+
+[Req 11, 34, 35] Production Tolerance Factor
+- Configuration: `configs/default_config.yaml`
+- Parameter: `production_tolerance_factor` (float).
+- Implementation: `apsd/core/analyzer.py` loads logic, passed to `learning.py` -> `evaluate`.
+- Formula: `Threshold = Mean + (Factor * Std)`.
+
+[Req 13, 41] Output Classification
+- Output Format: Nested Dict (`screw_issue`, `carrier_issue`, etc.)
+- Implementation: `apsd/core/analyzer.py` (`_assemble_final_dict`)
+- Logic:
+  - Slope/E04 -> `carrier_issue`
+  - Torque/E02 -> `tool_issue`
+  - Energy/E08 -> `machine_issue` (or similar mapping)
+
+3. Physical Standards Integration
+---------------------------------
+The system strictly adheres to physical standards for feature extraction.
+
+A. VDI/VDE 2647 (Mechanical Rigidity)
+- Feature: Rigidity Slope (dT/dθ).
+- Code: `feature_extractor.py` -> `extract` -> `calculate_robust_slope`.
+- Purpose: Used to detect "Snug Point" and detection of cross-threading.
+
+B. ISO 16047 (Energy Conservation)
+- Feature: Total Work (∫Tdθ).
+- Code: `feature_extractor.py` -> `extract` -> `calculate_work`.
+- Purpose: Differentiates material issues (e.g., missing gasket changes work required).
+
+4. Algorithm Details
+--------------------
+- Feature Extraction:
+  - Method: Theil-Sen Estimator (Robust Regression) for slope.
+  - Location: `apsd/utils/math_utils.py`.
+- Online Learning:
+  - Method: Welford's Algorithm (Approximated via Numpy on Rolling Buffer).
+  - Location: `learning.py` -> `_calculate_stats`.
+- Anomaly Detection:
+  - Method: Z-Score (Standard Score).
+  - Logic: `abs(Value - Mean) / Std > Tolerance`.
+
+5. Data Examples
+----------------
+
+A. Input Payload
+{
+  "Hole_1": {
+    "torque": [0.0, 0.5, 1.2, 3.0, 5.0],
+    "angle": [0.0, 10.0, 30.0, 60.0, 90.0],
+    "time": [0.0, 0.1, 0.2, 0.3, 0.4]
+  }
+}
+
+B. Output Result
+{
+  "Hole_1": {
+    "screw_issue": {
+      "status": "OK", "e_code": "", "w_code": "", "r_code": ""
+    },
+    "carrier_issue": {
+      "status": "NG",
+      "e_code": "E04",
+      "w_code": "1.0",
+      "r_code": "R04",
+      "health_score": 45,
+      "threshold_recommendation": 3.5
+    },
+    ...
+  },
+  "optimization_suggestion": {
+     "status": "OPTIMIZE",
+     "e_code": "DRIFT_DETECTED",
+     "w_code": "0.8",
+     "r_code": "UPDATE_PARAM",
+     "params": {
+       "suggested_torque_adjustment_percent": -8.0,
+       "reason_torque": "Mean Drift Detected (6.43 sigma)",
+       "suggested_speed_adjustment_percent": -10,
+       "reason_speed": "High Variance (CV=10.99%), reduce speed to stabilize."
+     }
+  }
+}
+
+6. Development & Deployment
+---------------------------
+- Environment: Python 3.10+
+- Dependencies: `numpy`, `scipy`, `pydantic`, `pyyaml`.
+- Tests: `pytest tests/test_integration.py`
+- Package: `python setup.py bdist_wheel` -> generates `.whl` for Linux edge deployment.
